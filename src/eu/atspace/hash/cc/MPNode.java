@@ -3,7 +3,6 @@ package eu.atspace.hash.cc;
 import java.io.*;
 import java.util.List;
 
-
 /*
  * Note: You can change/add any functions in MPNode.java
  * if you think it is necessary for your logic to work
@@ -19,7 +18,8 @@ public class MPNode {
     private enum MsgTypes {
         JOINREQ,
         JOINACK,
-        DUMMYLASTMSGTYPE
+        DUMMYLASTMSGTYPE,
+        PING
     }
 
     @SuppressWarnings("serial")
@@ -35,7 +35,7 @@ public class MPNode {
         private long timestamp;
 
         // entries (may be null)
-        public Member.Entry entries[];
+        public List<Member.Entry> entries;
 
 
         /**
@@ -252,8 +252,6 @@ public class MPNode {
 
         // ...then jump in and share your responsibilites!
         nodeLoopOps();
-
-        return;
     }
 
 
@@ -285,12 +283,19 @@ public class MPNode {
         switch (msg.msgType) {
             case JOINREQ:
                 log.log(node.addr, "JOINREQ received");
-                // TODO: process join request
+                pushMemberList(msg);
+                sendMessage(msg.addr, MsgTypes.JOINACK);
                 break;
 
             case JOINACK:
                 log.log(node.addr, "JOINACK received");
-                // TODO: process join response
+                // 1. add to memberlist
+                pushMemberList(msg);
+                memberNode.inGroup = true;
+                break;
+
+            case PING:
+                pingHandler(msg);
                 break;
 
             default:
@@ -301,6 +306,96 @@ public class MPNode {
         return false;
     }
 
+    private void pingHandler(Message message) {
+        updateSourceMember(message);
+
+        for (int i = 0; i < message.entries.size(); i++) {
+            if (message.entries.get(i).id > 10 || message.entries.get(i).id < 0) {
+                throw new RuntimeException("invalid id");
+            }
+
+            Member.Entry node = checkMemberList(message.entries.get(i).id, message.entries.get(i).port);
+
+            if (node != null) {
+                if (message.entries.get(i).heartbeat > node.heartbeat) {
+                    node.heartbeat = message.entries.get(i).heartbeat;
+                    node.timestamp = par.getCurrTime();
+                }
+            } else {
+                pushMemberList(message.entries.get(i));
+            }
+        }
+    }
+
+    private void updateSourceMember(Message message) {
+        Member.Entry sourceMember = checkMemberList(message.addr);
+
+        if (sourceMember != null) {
+            sourceMember.heartbeat++;
+            sourceMember.timestamp = par.getCurrTime();
+        } else {
+            pushMemberList(message);
+        }
+    }
+
+    private void sendMessage(Address toAddress, MsgTypes type) {
+        Message message = new Message();
+        message.msgType = type;
+        message.addr = memberNode.addr;
+
+        message.entries = memberNode.memberList;
+
+        emulNet.send(memberNode.addr, toAddress, Message.serialize(message));
+    }
+
+    private void pushMemberList(Message message) {
+        long time = par.getCurrTime();
+        if (checkMemberList(message.addr.getId(), message.addr.getPort()) != null) return;
+
+        Member.Entry entry = new Member.Entry(
+                message.addr.getId(),
+                message.addr.getPort(),
+                1,
+                time);
+
+        memberNode.memberList.add(entry);
+
+        Address address = new Address(entry.id, entry.port);
+
+        log.logNodeAdd(memberNode.addr, address);
+    }
+
+    private void pushMemberList(Member.Entry entry) {
+        Address address = new Address(entry.id, entry.port);
+
+        if (memberNode.addr.getId() == address.getId() &&
+                memberNode.addr.getPort() == address.getPort())
+            return;
+
+        if (par.getCurrTime() - entry.timestamp < TREMOVE) {
+            log.logNodeAdd(memberNode.addr, address);
+            Member.Entry e = new Member.Entry(entry.id, entry.port, entry.heartbeat, entry.timestamp);
+            memberNode.memberList.add(e);
+        }
+    }
+
+    private Member.Entry checkMemberList(int id, short port) {
+        for (Member.Entry entry : memberNode.memberList) {
+            if (entry.id == id && entry.port == port) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    private Member.Entry checkMemberList(Address address) {
+        for (Member.Entry entry : memberNode.memberList) {
+            if (entry.id == address.getId() && entry.port == address.getPort()) {
+                return entry;
+            }
+        }
+        return null;
+    }
 
     /**
      * FUNCTION NAME: nodeLoopOps
@@ -310,11 +405,32 @@ public class MPNode {
      * Propagate your membership list
      */
     private void nodeLoopOps() {
-        /*
-         * Your code goes here
-         */
+        // Update heartbeat
+        memberNode.heartbeat++;
+        // Check TREMOVE
 
-        return;
+        // log.log(memberNode.addr, String.valueOf(memberNode.heartbeat));
+
+
+        for (int i = memberNode.memberList.size() - 1; i >= 0; i--) {
+            if (par.getCurrTime() != memberNode.memberList.get(i).timestamp) {
+                log.log(memberNode.addr, "++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+                log.log(memberNode.addr, String.valueOf(par.getCurrTime()));
+                log.log(memberNode.addr, String.valueOf(memberNode.memberList.get(i).timestamp));
+            }
+
+            if (par.getCurrTime() - memberNode.memberList.get(i).timestamp >= TREMOVE) {
+                Address removedAddress = new Address(memberNode.memberList.get(i).id, memberNode.memberList.get(i).port);
+                log.logNodeRemove(memberNode.addr, removedAddress);
+                memberNode.memberList.remove(i);
+            }
+        }
+
+        // Send PING to the members of memberList
+        for (Member.Entry entry : memberNode.memberList) {
+            Address address = new Address(entry.id, entry.port);
+            sendMessage(address, MsgTypes.PING);
+        }
     }
 
 
@@ -347,5 +463,4 @@ public class MPNode {
             log.log(memberNode.addr, s);
         }
     }
-
 }
