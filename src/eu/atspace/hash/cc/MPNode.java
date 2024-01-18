@@ -409,16 +409,7 @@ public class MPNode {
         memberNode.heartbeat++;
         // Check TREMOVE
 
-        // log.log(memberNode.addr, String.valueOf(memberNode.heartbeat));
-
-
         for (int i = memberNode.memberList.size() - 1; i >= 0; i--) {
-            if (par.getCurrTime() != memberNode.memberList.get(i).timestamp) {
-                log.log(memberNode.addr, "++++++++++++++++++++++++++++++++++++++++++++++++++++++");
-                log.log(memberNode.addr, String.valueOf(par.getCurrTime()));
-                log.log(memberNode.addr, String.valueOf(memberNode.memberList.get(i).timestamp));
-            }
-
             if (par.getCurrTime() - memberNode.memberList.get(i).timestamp >= TREMOVE) {
                 Address removedAddress = new Address(memberNode.memberList.get(i).id, memberNode.memberList.get(i).port);
                 log.logNodeRemove(memberNode.addr, removedAddress);
